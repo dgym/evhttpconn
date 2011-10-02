@@ -1,12 +1,12 @@
-all: libevhttp.so benchmark
+all: libevhttpconn.so benchmark
 
 clean:
-	rm -f *.o livevhttp.so benchmark
+	rm -f *.o libevhttpconn.so benchmark
 
-libevhttp.so: evhttp.o
+libevhttpconn.so: evhttpconn.o
 	gcc -shared -o $@ $^ -lev -g $(LDFLAGS)
 
-benchmark: benchmark.o evhttp.o
+benchmark: benchmark.o evhttpconn.o
 	gcc -o $@ $^ -lev -lpcre -lpthread -g $(LDFLAGS)
 
 %.o: %.c
