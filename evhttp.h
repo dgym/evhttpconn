@@ -30,7 +30,7 @@ void evhttp_connection_init(evhttp_connection_t *self,
                             void *callback_data);
 void evhttp_connection_close(evhttp_connection_t *self);
 
-void evhttp_connection_send(evhttp_connection_t *self, evhttp_string_t data);
+int evhttp_connection_send(evhttp_connection_t *self, evhttp_string_t data);
 //char *evhttp_connection_make_send_buffer(evhttp_connection_t *self, int length);
 void evhttp_connection_terminate(evhttp_connection_t *self);
 

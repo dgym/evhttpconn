@@ -29,24 +29,21 @@ static void buffer_free(buffer_t *self)
     buffer_init(self);
 }
 
-static void buffer_allocate(buffer_t *self, int size)
+static int buffer_allocate(buffer_t *self, int size)
 {
     if (size == self->allocated)
-        return;
+        return 0;
 
-    self->data = (char *)realloc(self->data, size);
+    char *data = (char *)realloc(self->data, size);
+    if (!data)
+        return -1;
+
+    self->data = data;
     self->allocated = size;
+    return 0;
 }
 
-static void buffer_set(buffer_t *self, void *data, int size)
-{
-    self->data = (char *)malloc(size);
-    self->size = size;
-    self->allocated = size;
-    memcpy(self->data, data, size);
-}
-
-static void buffer_make_space(buffer_t *self, int size)
+static int buffer_make_space(buffer_t *self, int size)
 {
     int new_size;
 
@@ -57,7 +54,7 @@ static void buffer_make_space(buffer_t *self, int size)
     while (new_size - self->size < size)
         new_size <<= 1;
 
-    buffer_allocate(self, new_size);
+    return buffer_allocate(self, new_size);
 }
 
 static int buffer_find_chr(buffer_t *self, char c)
@@ -132,12 +129,15 @@ void evhttp_connection_close(evhttp_connection_t *self)
         self->on_close(self->callback_data);
 }
 
-void evhttp_connection_send(evhttp_connection_t *self, evhttp_string_t data)
+int evhttp_connection_send(evhttp_connection_t *self, evhttp_string_t data)
 {
-    buffer_make_space(&self->write_buffer, data.length);
+    if (buffer_make_space(&self->write_buffer, data.length) != 0)
+        return -1;
+
     memcpy(self->write_buffer.data + self->write_buffer.size, data.data, data.length);
     self->write_buffer.size += data.length;
     ev_io_start(self->loop, &self->write_watcher);
+    return 0;
 }
 
 void evhttp_connection_terminate(evhttp_connection_t *self)
@@ -150,7 +150,12 @@ void on_read(ev_loop_t *loop, ev_io_t *watcher, int revents)
     connection_t *self = (connection_t *)watcher->data;
     int got;
 
-    buffer_make_space(&self->read_buffer, 4096);
+    if (buffer_make_space(&self->read_buffer, 4096) != 0)
+    {
+        evhttp_connection_close(self);
+        return;
+    }
+
     got = read(self->fd, self->read_buffer.data + self->read_buffer.size, 4096);
     if (got <= 0)
     {
@@ -350,7 +355,7 @@ void on_read(ev_loop_t *loop, ev_io_t *watcher, int revents)
     if (self->state == 5)
     {
         // keep alive not currently supported
-        // goto terinal state 6
+        // goto terminal state 6
         self->state = 6;
 
         if (self->on_complete)
