@@ -74,6 +74,10 @@ static int buffer_find_chr(buffer_t *self, char c)
 // Connections
 ///
 
+#define CLOSE_OK 0
+#define CLOSE_DELAY 1
+#define CLOSE_REQESTED 2
+
 static void on_read(ev_loop_t *loop, ev_io_t *watcher, int revents);
 static void on_write(ev_loop_t *loop, ev_io_t *watcher, int revents);
 
@@ -89,7 +93,6 @@ void evhttp_connection_init(evhttp_connection_t *self,
                             evhttp_connection_on_close on_close,
                             void *callback_data)
 {
-    memset(self, 0, sizeof(evhttp_connection_t));
     self->loop = loop;
     self->fd = fd;
 
@@ -105,6 +108,7 @@ void evhttp_connection_init(evhttp_connection_t *self,
     self->state = 0;
     self->content_length = -2;
     self->terminating = 0;
+    self->closing = CLOSE_OK;
 
     self->on_first_line = on_first_line;
     self->on_header = on_header;
@@ -120,6 +124,12 @@ void evhttp_connection_init(evhttp_connection_t *self,
 
 void evhttp_connection_close(evhttp_connection_t *self)
 {
+    if (self->closing != CLOSE_OK)
+    {
+        self->closing = CLOSE_REQESTED;
+        return;
+    }
+
     ev_io_stop(self->loop, &self->read_watcher);
     ev_io_stop(self->loop, &self->write_watcher);
 
@@ -127,8 +137,11 @@ void evhttp_connection_close(evhttp_connection_t *self)
     buffer_free(&self->write_buffer);
 
     if (self->on_close)
-        self->on_close(self->callback_data);
-    self->on_close = NULL;
+    {
+        evhttp_connection_on_close on_close = self->on_close;
+        self->on_close = NULL;
+        on_close(self->callback_data);
+    }
 }
 
 int evhttp_connection_send(evhttp_connection_t *self, evhttp_string_t data)
@@ -154,10 +167,11 @@ void on_read(ev_loop_t *loop, ev_io_t *watcher, int revents)
     connection_t *self = (connection_t *)watcher->data;
     int got;
 
+    self->closing = CLOSE_DELAY;
+
     if (buffer_make_space(&self->read_buffer, 4096) != 0)
     {
-        evhttp_connection_close(self);
-        return;
+        goto close;
     }
 
     got = read(self->fd, self->read_buffer.data + self->read_buffer.size, 4096);
@@ -168,8 +182,7 @@ void on_read(ev_loop_t *loop, ev_io_t *watcher, int revents)
             if (self->on_complete)
                 self->on_complete(self->callback_data);
         }
-        evhttp_connection_close(self);
-        return;
+        goto close;
     }
     self->read_buffer.size += got;
 
@@ -222,6 +235,8 @@ void on_read(ev_loop_t *loop, ev_io_t *watcher, int revents)
                 third.length = end - self->read_buffer.start;
 
                 self->on_first_line(first, second, third, self->callback_data);
+                if (self->closing == CLOSE_REQESTED)
+                    goto close;
             }
 
             self->read_buffer.start = idx + 1;
@@ -252,6 +267,8 @@ void on_read(ev_loop_t *loop, ev_io_t *watcher, int revents)
                     message.data = data;
                     message.length = newline+1;
                     self->on_headers_end(message, self->callback_data);
+                    if (self->closing == CLOSE_REQESTED)
+                        goto close;
                 }
 
                 break;
@@ -317,6 +334,8 @@ void on_read(ev_loop_t *loop, ev_io_t *watcher, int revents)
             if (self->on_header)
             {
                 self->on_header(key, value, self->callback_data);
+                if (self->closing == CLOSE_REQESTED)
+                    goto close;
             }
 
             self->read_buffer.start = newline + 1;
@@ -340,6 +359,8 @@ void on_read(ev_loop_t *loop, ev_io_t *watcher, int revents)
                     content.data = self->read_buffer.data + self->read_buffer.start;
                     content.length = self->content_length;
                     self->on_complete_content(content, self->callback_data);
+                    if (self->closing == CLOSE_REQESTED)
+                        goto close;
                 }
             }
             else
@@ -350,6 +371,8 @@ void on_read(ev_loop_t *loop, ev_io_t *watcher, int revents)
                     content.data = self->read_buffer.data + self->read_buffer.start;
                     content.length = len;
                     self->on_chunk(content, self->callback_data);
+                    if (self->closing == CLOSE_REQESTED)
+                        goto close;
                 }
 
                 self->tmp[0] += len;
@@ -371,10 +394,20 @@ void on_read(ev_loop_t *loop, ev_io_t *watcher, int revents)
         self->state = 6;
 
         if (self->on_complete)
+        {
             self->on_complete(self->callback_data);
+            if (self->closing == CLOSE_REQESTED)
+                goto close;
+        }
 
         ev_io_stop(self->loop, &self->read_watcher);
     }
+
+    self->closing = CLOSE_OK;
+    return;
+close:
+    self->closing = CLOSE_OK;
+    evhttp_connection_close(self);
 }
 
 void on_write(ev_loop_t *loop, ev_io_t *watcher, int revents)

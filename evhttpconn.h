@@ -57,6 +57,7 @@ struct evhttp_connection
     int content_length;
     int tmp[4];
     int terminating;
+    int closing;
 
     evhttp_connection_on_first_line on_first_line;
     evhttp_connection_on_header on_header;
