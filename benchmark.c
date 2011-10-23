@@ -75,6 +75,12 @@ static void on_first_line(evhttp_string_t first, evhttp_string_t second, evhttp_
     //printf("%i\n", conn->results->code);
 }
 
+static void on_chunk(evhttp_string_t content, void *data)
+{
+    connection_t *conn = (connection_t *)data;
+    conn->results->content_length += content.length;
+}
+
 static void on_complete(void *data)
 {
     connection_t *conn = (connection_t *)data;
@@ -126,12 +132,14 @@ static void *worker(worker_info_t *info)
                                            on_first_line,
                                            NULL,
                                            NULL,
-                                           NULL,
+                                           on_chunk,
                                            NULL,
                                            on_complete,
                                            on_close,
                                            (void *)(info->conns + i));
                     state->results[c].code = -2;
+                    state->results[c].content_length = 0;
+                    state->results[c].millis = 0;
                     evhttp_connection_send(&info->conns[i].http_conn, state->request);
                     info->conns[i].running = 1;
                     info->conns[i].results = state->results + c;
@@ -163,14 +171,13 @@ static void *worker(worker_info_t *info)
 
         ev_loop(info->loop, EVLOOP_ONESHOT);
     }
-
-    printf("worker done %i\n", done);
 }
 
 int main(int argc, char * const argv[])
 {
     int option_index = 0;
     int c, i, j;
+    int use_deflate = 0;
 
     state_t state;
 
@@ -184,7 +191,7 @@ int main(int argc, char * const argv[])
     {
         static struct option long_options[] = { {0, 0, 0, 0} };
 
-        c = getopt_long(argc, argv, "n:c:t:",
+        c = getopt_long(argc, argv, "n:c:t:z",
                         long_options, &option_index);
 
         if (c == -1)
@@ -200,6 +207,9 @@ int main(int argc, char * const argv[])
             break;
         case 't':
             state.args.threads = atoi(optarg);
+            break;
+        case 'z':
+            use_deflate = 1;
             break;
         default:
             usage();
@@ -265,9 +275,12 @@ int main(int argc, char * const argv[])
                            "GET %s HTTP/1.0\r\n"
                            "Host: %s\r\n"
                            "User-Agent: benchmark\r\n"
+                           "%s"
                            "Accept: */*\r\n\r\n",
                            path,
-                           host_header);
+                           host_header,
+                           use_deflate ? "accept-encoding: gzip,deflate\r\n" : ""
+                           );
     if (printed < 1 || printed >= 4096)
     {
         fprintf(stderr, "error formatting request");
@@ -331,11 +344,11 @@ int main(int argc, char * const argv[])
 
     // report results
     printf("%i requests in %li millis\n", state.args.number, millis);
-    printf("%g rps\n", 1000.0 * ((double)state.args.number) / ((double)millis));
 
     int conn_failed = 0;
     int conn_ok = 0;
     int conn_other = 0;
+    int content_length = 0;
     for (i=0; i<state.args.number; ++i)
     {
         switch (state.results[i].code)
@@ -345,6 +358,7 @@ int main(int argc, char * const argv[])
             break;
         case 200:
             ++conn_ok;
+            content_length += state.results[i].content_length;
             break;
         default:
             ++conn_other;
@@ -353,7 +367,10 @@ int main(int argc, char * const argv[])
         }
     }
     printf("%i OK. %i failed. %i other\n", conn_ok, conn_failed, conn_other);
+    if (conn_ok)
+        printf("%g average bytes per page\n", (double)content_length / (double)conn_ok);
 
+    printf("%g rps\n", 1000.0 * ((double)state.args.number) / ((double)millis));
     free(state.results);
 
     return 0;
