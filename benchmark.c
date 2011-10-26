@@ -72,7 +72,6 @@ static void on_first_line(evhttp_string_t first, evhttp_string_t second, evhttp_
 {
     connection_t *conn = (connection_t *)data;
     conn->results->code = strtol(second.data, NULL, 10);
-    //printf("%i\n", conn->results->code);
 }
 
 static void on_chunk(evhttp_string_t content, void *data)
@@ -81,19 +80,12 @@ static void on_chunk(evhttp_string_t content, void *data)
     conn->results->content_length += content.length;
 }
 
-static void on_complete(void *data)
-{
-    connection_t *conn = (connection_t *)data;
-    evhttp_connection_terminate(&conn->http_conn);
-}
-
 static void on_close(void *data)
 {
     connection_t *conn = (connection_t *)data;
     conn->running = 0;
     conn->results->millis = now() - conn->started;
     close(conn->fd);
-    //printf("%i\n", conn->results->millis);
 }
 
 static void *worker(worker_info_t *info)
@@ -134,7 +126,7 @@ static void *worker(worker_info_t *info)
                                            NULL,
                                            on_chunk,
                                            NULL,
-                                           on_complete,
+                                           NULL,
                                            on_close,
                                            (void *)(info->conns + i));
                     state->results[c].code = -2;

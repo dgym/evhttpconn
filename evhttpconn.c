@@ -399,8 +399,14 @@ void on_read(ev_loop_t *loop, ev_io_t *watcher, int revents)
             if (self->closing == CLOSE_REQESTED)
                 goto close;
         }
+    }
 
-        ev_io_stop(self->loop, &self->read_watcher);
+    if (self->state == 6)
+    {
+        // terminal state, just absorb
+        // any further data
+        self->read_buffer.start = 0;
+        self->read_buffer.size = 0;
     }
 
     self->closing = CLOSE_OK;
